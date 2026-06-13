@@ -2,11 +2,12 @@ import "dotenv/config";
 // require("dotenv").config(); // 무조건 이 코드가 1등으로 실행되도록 맨 위에 작성
 import express, { Request, Response } from "express";
 import cors from "cors";
-
+import safetyRouter from "./routes/safety";
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/safety", safetyRouter);
 
 // define data type of marker
 interface Marker {
