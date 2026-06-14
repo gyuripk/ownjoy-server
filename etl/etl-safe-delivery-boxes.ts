@@ -15,6 +15,7 @@ async function fetchPage(pageNo: number) {
   const res = await fetch(url);
   const data = await res.json(); // coverts res to JS obj
   return data.response.body;
+  console.log(JSON.stringify(data));
 }
 
 // transform function
