@@ -173,4 +173,49 @@ router.get("/emergency-bells", async (req: Request, res: Response) => {
   });
 });
 
+// GET /api/safety/safe-stores
+router.get("/safe-stores", async (req: Request, res: Response) => {
+  const { bbox } = req.query;
+
+  if (!bbox) {
+    res.status(400).json({ error: "bbox query parameter is required" });
+    return;
+  }
+
+  const [west, south, east, north] = (bbox as string).split(",").map(Number);
+
+  const result = await pool.query(
+    `SELECT
+      id,
+      name,
+      road_address,
+      phone,
+      police_station,
+      is_operating,
+      ST_AsGeoJSON(location)::json AS geometry
+    FROM safety.safe_stores
+    WHERE ST_Intersects(
+      location,
+      ST_MakeEnvelope($1, $2, $3, $4, 4326)
+    )`,
+    [west, south, east, north],
+  );
+
+  res.json({
+    type: "FeatureCollection",
+    features: result.rows.map((row) => ({
+      type: "Feature",
+      geometry: row.geometry,
+      properties: {
+        id: row.id,
+        name: row.name,
+        road_address: row.road_address,
+        phone: row.phone,
+        police_station: row.police_station,
+        is_operating: row.is_operating,
+      },
+    })),
+  });
+});
+
 export default router;
