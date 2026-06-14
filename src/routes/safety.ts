@@ -218,4 +218,51 @@ router.get("/safe-stores", async (req: Request, res: Response) => {
   });
 });
 
+// GET /api/safety/smart-street-lights
+router.get("/smart-street-lights", async (req: Request, res: Response) => {
+  const { bbox } = req.query;
+
+  if (!bbox) {
+    res.status(400).json({ error: "bbox query parameter is required" });
+    return;
+  }
+
+  const [west, south, east, north] = (bbox as string).split(",").map(Number);
+
+  const result = await pool.query(
+    `SELECT
+      id,
+      lamp_type,
+      road_address,
+      always_on,
+      has_cctv,
+      has_wifi,
+      has_emergency_call,
+      ST_AsGeoJSON(location)::json AS geometry
+    FROM safety.smart_street_lights
+    WHERE ST_Intersects(
+      location,
+      ST_MakeEnvelope($1, $2, $3, $4, 4326)
+    )`,
+    [west, south, east, north],
+  );
+
+  res.json({
+    type: "FeatureCollection",
+    features: result.rows.map((row) => ({
+      type: "Feature",
+      geometry: row.geometry,
+      properties: {
+        id: row.id,
+        lamp_type: row.lamp_type,
+        road_address: row.road_address,
+        always_on: row.always_on,
+        has_cctv: row.has_cctv,
+        has_wifi: row.has_wifi,
+        has_emergency_call: row.has_emergency_call,
+      },
+    })),
+  });
+});
+
 export default router;
