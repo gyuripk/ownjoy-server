@@ -116,4 +116,61 @@ router.get("/delivery-boxes", async (req: Request, res: Response) => {
   });
 });
 
+// GET /api/safety/emergency-bells
+router.get("/emergency-bells", async (req: Request, res: Response) => {
+  // get request
+  // get bbox from query
+  const { bbox } = req.query;
+
+  if (!bbox) {
+    res.status(400).json({ error: "bbox query parameter is required!" });
+    return;
+  }
+
+  // parse bbox
+  const [west, south, east, north] = (bbox as string).split(",").map(Number);
+
+  // send query to DB
+  // get data from db
+  const result = await pool.query(
+    `SELECT
+      source_id,
+      install_place_type,
+      install_location,
+      link_method,
+      police_linked,
+      security_linked,
+      office_linked,
+      is_working,
+      road_address,
+      ST_AsGeoJSON(location)::json AS geometry
+    FROM safety.emergency_bells
+    WHERE ST_Intersects(
+      location,
+      ST_MakeEnvelope($1, $2, $3, $4, 4326)
+    )`,
+    [west, south, east, north],
+  );
+  // only bbox area data
+  // build response
+  res.json({
+    type: "FeatureCollection",
+    features: result.rows.map((row) => ({
+      type: "Feature",
+      geometry: row.geometry,
+      properties: {
+        source_id: row.source_id,
+        install_place_type: row.install_place_type,
+        install_location: row.install_location,
+        link_method: row.link_method,
+        police_linked: row.police_linked,
+        security_linked: row.security_linked,
+        office_linked: row.office_linked,
+        is_working: row.is_working,
+        road_address: row.road_address,
+      },
+    })),
+  });
+});
+
 export default router;
