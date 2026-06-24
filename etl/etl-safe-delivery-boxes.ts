@@ -13,9 +13,8 @@ const API_KEY = process.env.PUB_DATA_KEY!;
 async function fetchPage(pageNo: number) {
   const url = `${API_URL}?serviceKey=${API_KEY}&type=json&numOfRows=1000&pageNo=${pageNo}`;
   const res = await fetch(url);
-  const data = await res.json(); // coverts res to JS obj
+  const data = await res.json();
   return data.response.body;
-  console.log(JSON.stringify(data));
 }
 
 // transform function
@@ -83,28 +82,29 @@ async function insertRecord(item: ReturnType<typeof transform>) {
 async function main() {
   console.log("Starting ETL for safe_delivery_boxes...");
 
-  const firstPage = await fetchPage(1);
-  const totalCount = parseInt(firstPage.totalCount);
-  const totalPages = Math.ceil(totalCount / 1000);
+  try {
+    await pool.query("TRUNCATE TABLE safety.safe_delivery_boxes RESTART IDENTITY");
 
-  console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
+    const firstPage = await fetchPage(1);
+    const totalCount = parseInt(firstPage.totalCount);
+    const totalPages = Math.ceil(totalCount / 1000);
+    console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
 
-  // loop to extract data for every page
-  for (let page = 1; page <= totalPages; page++) {
-    const body = await fetchPage(page);
-    const items = body.items;
+    for (let page = 1; page <= totalPages; page++) {
+      const body = page === 1 ? firstPage : await fetchPage(page);
+      const items = body.items;
 
-    // transform each item data
-    for (const item of items) {
-      const transformed = transform(item);
-      await insertRecord(transformed);
+      for (const item of items) {
+        await insertRecord(transform(item));
+      }
+
+      console.log(`Page ${page}/${totalPages} done`);
     }
 
-    console.log(`Page ${page}/${totalPages} done`);
+    console.log("ETL complete");
+  } finally {
+    await pool.end();
   }
-
-  await pool.end(); // closes the database connection
-  console.log("ETL complete");
 }
 
 // execute script

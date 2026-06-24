@@ -13,7 +13,7 @@ async function fetchPage(page: number) {
   const url = `${API_URL}?serviceKey=${API_KEY}&pageNo=${page}&numOfRows=100`;
   const res = await fetch(url);
   const data = await res.json();
-  return data.response.body; //
+  return data.response.body;
 }
 
 // Transform - transform data
@@ -92,30 +92,26 @@ async function insertRecord(item: ReturnType<typeof transform>) {
 // main
 async function main() {
   console.log("Starting ETL for emergency_bell...");
-  // calculate num of loop
-  const firstPage = await fetchPage(1);
-  const totalCount = parseInt(firstPage.totalCount);
-  const totalPages = Math.ceil(totalCount / 100);
 
-  console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
+  try {
+    const firstPage = await fetchPage(1);
+    const totalCount = parseInt(firstPage.totalCount);
+    const totalPages = Math.ceil(totalCount / 100);
+    console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
 
-  for (let page = 1; page <= totalPages; page++) {
-    // E
-    const body = await fetchPage(page);
-    const items = body.items.item;
-    for (let item of items) {
-      // T
-      const transformed = transform(item);
-      // L
-      await insertRecord(transformed);
+    for (let page = 1; page <= totalPages; page++) {
+      const body = page === 1 ? firstPage : await fetchPage(page);
+      const items = body.items.item;
+      for (const item of items) {
+        await insertRecord(transform(item));
+      }
+      console.log(`Page ${page}/${totalPages} done`);
     }
 
-    console.log(`Page ${page}/${totalPages} done`);
+    console.log("ETL completed");
+  } finally {
+    await pool.end();
   }
-
-  // disconnect db
-  await pool.end();
-  console.log("ETL completed");
 }
 
 // execute function

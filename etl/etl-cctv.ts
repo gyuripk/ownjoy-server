@@ -6,10 +6,18 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const API_URL = "https://apis.data.go.kr/1741000/cctv_info/info";
 const API_KEY = process.env.PUB_DATA_KEY;
 
-async function fetchPage(page: number) {
+async function fetchPage(page: number, retries = 3): Promise<any> {
   const url = `${API_URL}?serviceKey=${API_KEY}&pageNo=${page}&numOfRows=100`;
   const res = await fetch(url);
   const data = await res.json();
+  if (!data.response?.body) {
+    console.error(`Page ${page} bad response:`, JSON.stringify(data));
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return fetchPage(page, retries - 1);
+    }
+    throw new Error(`Failed to fetch page ${page}`);
+  }
   return data.response.body;
 }
 
@@ -62,22 +70,25 @@ async function upsertRecord(item: ReturnType<typeof transform>) {
 async function main() {
   console.log("Starting ETL for cctv...");
 
-  const firstPage = await fetchPage(1);
-  const totalCount = parseInt(firstPage.totalCount);
-  const totalPages = Math.ceil(totalCount / 100);
-  console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
+  try {
+    const firstPage = await fetchPage(1);
+    const totalCount = parseInt(firstPage.totalCount);
+    const totalPages = Math.ceil(totalCount / 100);
+    console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
 
-  for (let page = 1; page <= totalPages; page++) {
-    const body = await fetchPage(page);
-    const items = body.items.item;
-    for (const item of items) {
-      await upsertRecord(transform(item));
+    for (let page = 1; page <= totalPages; page++) {
+      const body = page === 1 ? firstPage : await fetchPage(page);
+      const items = body.items.item;
+      for (const item of items) {
+        await upsertRecord(transform(item));
+      }
+      if (page % 100 === 0) console.log(`Page ${page}/${totalPages} done`);
     }
-    if (page % 100 === 0) console.log(`Page ${page}/${totalPages} done`);
-  }
 
-  await pool.end();
-  console.log("ETL complete.");
+    console.log("ETL complete.");
+  } finally {
+    await pool.end();
+  }
 }
 
 main();

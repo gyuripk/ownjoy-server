@@ -63,26 +63,28 @@ async function insertRecord(item: ReturnType<typeof transform>) {
 
 async function main() {
   console.log("Starting ETL for smart_street_lights...");
-  await pool.query(
-    "TRUNCATE TABLE safety.smart_street_lights RESTART IDENTITY",
-  );
 
-  const firstPage = await fetchPage(1);
-  const totalCount = parseInt(firstPage.totalCount);
-  const totalPages = Math.ceil(totalCount / 1000);
-  console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
+  try {
+    await pool.query("TRUNCATE TABLE safety.smart_street_lights RESTART IDENTITY");
 
-  for (let page = 1; page <= totalPages; page++) {
-    const body = await fetchPage(page);
-    const items = body.items;
-    for (const item of items) {
-      await insertRecord(transform(item));
+    const firstPage = await fetchPage(1);
+    const totalCount = parseInt(firstPage.totalCount);
+    const totalPages = Math.ceil(totalCount / 1000);
+    console.log(`Total records: ${totalCount}, Total pages: ${totalPages}`);
+
+    for (let page = 1; page <= totalPages; page++) {
+      const body = page === 1 ? firstPage : await fetchPage(page);
+      const items = body.items;
+      for (const item of items) {
+        await insertRecord(transform(item));
+      }
+      console.log(`Page ${page}/${totalPages} done`);
     }
-    console.log(`Page ${page}/${totalPages} done`);
-  }
 
-  await pool.end();
-  console.log("ETL complete.");
+    console.log("ETL complete.");
+  } finally {
+    await pool.end();
+  }
 }
 
 main();
