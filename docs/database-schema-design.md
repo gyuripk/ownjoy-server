@@ -6,11 +6,11 @@
 
 Most APIs return WGS84 (standard lat/lng) — but two do not:
 
-| API | Coordinate System | Status |
-|---|---|---|
-| CCTV, Street Lights, Emergency Bell, Shelters, etc. | WGS84 | ✅ Ready to use |
-| **CPTED** | Korean TM (EPSG:5174) | ❌ `GEOM: "POINT(14135850 4511541)"` — must convert |
-| **안심귀갓길 경로** | SHP file | Different format entirely |
+| API                                                 | Coordinate System     | Status                                              |
+| --------------------------------------------------- | --------------------- | --------------------------------------------------- |
+| CCTV, Street Lights, Emergency Bell, Shelters, etc. | WGS84                 | ✅ Ready to use                                     |
+| **CPTED**                                           | Korean TM (EPSG:5174) | ❌ `GEOM: "POINT(14135850 4511541)"` — must convert |
+| **안심귀갓길 경로**                                 | SHP file              | Different format entirely                           |
 
 CPTED coordinates must be converted to WGS84 during ETL using PostGIS `ST_Transform()`.
 
@@ -20,10 +20,10 @@ CPTED coordinates must be converted to WGS84 during ETL using PostGIS `ST_Transf
 
 Every API produces point data except one:
 
-| API | Geometry Type | Reason |
-|---|---|---|
-| CCTV, Emergency Bell, Street Lights, etc. | `Point` | Single installation location |
-| **안심귀갓길 경로** | `LineString` | A route — a path connecting multiple points |
+| API                                       | Geometry Type | Reason                                      |
+| ----------------------------------------- | ------------- | ------------------------------------------- |
+| CCTV, Emergency Bell, Street Lights, etc. | `Point`       | Single installation location                |
+| **안심귀갓길 경로**                       | `LineString`  | A route — a path connecting multiple points |
 
 The route JSON API only returns stats (bell count, CCTV count per segment) — **no path geometry**. The actual path comes from the SHP file only.
 
@@ -49,14 +49,14 @@ This is a one-time manual step, separate from the monthly ETL pipeline.
 
 Each API returns 20–30 fields. Keep only what's needed:
 
-| Column | Purpose |
-|---|---|
-| `location` | Geometry — for map display and bbox queries |
-| `address` | Shown in map popups |
-| `name` | Identifies the marker |
-| Meaningful flags | `has_cctv`, `is_operating`, `police_linked`, etc. |
-| `source_id` | Original API unique ID — used for ETL upserts (no duplicates) |
-| `refreshed_at` | Timestamp of last ETL update |
+| Column           | Purpose                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `location`       | Geometry — for map display and bbox queries                   |
+| `address`        | Shown in map popups                                           |
+| `name`           | Identifies the marker                                         |
+| Meaningful flags | `has_cctv`, `is_operating`, `police_linked`, etc.             |
+| `source_id`      | Original API unique ID — used for ETL upserts (no duplicates) |
+| `refreshed_at`   | Timestamp of last ETL update                                  |
 
 ---
 
@@ -116,8 +116,8 @@ CREATE TABLE safety.street_lights (
 );
 CREATE INDEX ON safety.street_lights USING GIST (location);
 
--- Women's Safety Shelters (여성안심지킴이집)
-CREATE TABLE safety.womens_shelters (
+-- Safe Haven Convenience Store or Safety Guardian House for Women(여성안심지킴이집)
+CREATE TABLE safety.safe_stores (
     id              SERIAL PRIMARY KEY,
     name            TEXT,        -- storNm
     address         TEXT,
@@ -128,7 +128,7 @@ CREATE TABLE safety.womens_shelters (
     location        GEOMETRY(Point, 4326),
     refreshed_at    TIMESTAMPTZ
 );
-CREATE INDEX ON safety.womens_shelters USING GIST (location);
+CREATE INDEX ON safety.safe_stores USING GIST (location);
 
 -- Safe Delivery Boxes (전국안심택배함)
 CREATE TABLE safety.safe_delivery_boxes (
@@ -185,6 +185,23 @@ CREATE TABLE safety.cpted_points (
     refreshed_at    TIMESTAMPTZ
 );
 CREATE INDEX ON safety.cpted_points USING GIST (location);
+
+-- Police Facilities (치안시설 — 경찰서, 지구대, 파출소, 치안센터)
+-- Source: data.go.kr (3 APIs: 경찰청_전국 경찰서/지구대파출소/치안센터 주소 현황)
+-- Chosen over SafeMap IF_0036: cleaner addresses → fewer geocoding failures (safety-critical)
+-- ⚠️ No coordinates in any source — geocoded via Kakao API during ETL (delta-sync)
+-- source_id: station_{경찰서명칭} | substation_{시도청}_{관서명}_{구분} | security_center_{경찰서}_{치안센터명}
+CREATE TABLE safety.police_facilities (
+    source_id       TEXT PRIMARY KEY,
+    name            TEXT,               -- 경찰서명칭 / 관서명+구분 / 치안센터명
+    facility_type   TEXT,               -- 경찰서 / 지구대 / 파출소 / 치안센터
+    road_address    TEXT,               -- geocoding input; shown in popup
+    police_agency   TEXT,               -- 시도경찰청 / 시도청
+    police_station  TEXT,               -- parent 경찰서 (지구대/파출소/치안센터 only)
+    location        GEOMETRY(Point, 4326),
+    refreshed_at    TIMESTAMPTZ
+);
+CREATE INDEX ON safety.police_facilities USING GIST (location);
 
 -- Seoul Safe Return Routes (서울시 안심귀갓길 경로)
 -- ⚠️ Geometry comes from SHP file, not JSON API
@@ -254,6 +271,7 @@ Independent point data (no relationships between them):
   safety.security_lights
   safety.emergency_bells
   safety.cpted_points
+  safety.police_facilities
 
 안심귀갓길 group (linked by ASG_ID):
 
@@ -288,13 +306,14 @@ WHERE ST_Within(
 
 ## ETL Notes
 
-| Table | Source | Frequency | Special handling |
-|---|---|---|---|
-| `cctv` | apis.data.go.kr/1741000/cctv_info | Monthly | None |
-| `street_lights` | api.data.go.kr/openapi/tn_pubr_public_smart_streetlight_api | Monthly | None |
-| `womens_shelters` | api.data.go.kr/openapi/tn_pubr_public_female_safety_prtchouse_api | Monthly | None |
-| `safe_delivery_boxes` | api.data.go.kr/openapi/tn_pubr_public_female_safety_hdrycstdyplace_api | Monthly | None |
-| `security_lights` | api.data.go.kr/openapi/tn_pubr_public_scrty_lmp_api | Monthly | None |
-| `emergency_bells` | apis.data.go.kr/1741000/emergency_call_box_info | Monthly | None |
-| `cpted_points` | safetydata.go.kr/V2/api/DSSP-IF-00090 | Monthly | **Coordinate conversion EPSG:5174 → 4326** |
-| `safe_return_routes` | SHP file download | Manual / periodic | **ogr2ogr conversion, LineString geometry** |
+| Table                 | Source                                                                 | Frequency         | Special handling                            |
+| --------------------- | ---------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
+| `cctv`                | apis.data.go.kr/1741000/cctv_info                                      | Monthly           | None                                        |
+| `street_lights`       | api.data.go.kr/openapi/tn_pubr_public_smart_streetlight_api            | Monthly           | None                                        |
+| `womens_shelters`     | api.data.go.kr/openapi/tn_pubr_public_female_safety_prtchouse_api      | Monthly           | None                                        |
+| `safe_delivery_boxes` | api.data.go.kr/openapi/tn_pubr_public_female_safety_hdrycstdyplace_api | Monthly           | None                                        |
+| `security_lights`     | api.data.go.kr/openapi/tn_pubr_public_scrty_lmp_api                    | Monthly           | None                                        |
+| `emergency_bells`     | apis.data.go.kr/1741000/emergency_call_box_info                        | Monthly           | None                                        |
+| `cpted_points`        | safetydata.go.kr/V2/api/DSSP-IF-00090                                  | Monthly           | **Coordinate conversion EPSG:5174 → 4326**  |
+| `safe_return_routes`  | SHP file download                                                      | Manual / periodic | **ogr2ogr conversion, LineString geometry** |
+| `police_facilities`   | data.go.kr (경찰청 경찰서/지구대파출소/치안센터 3 APIs)                | Annually          | **No coordinates — Kakao geocoding per type; delta-sync by source_id** |

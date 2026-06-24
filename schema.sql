@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS safety.safe_return_routes (
 ALTER TABLE safety.safe_return_routes OWNER TO postgres;
 
 --
--- Name: safe_stores; Type: TABLE; Schema: safety; Owner: postgres
+-- Name: safe_stores (Safe Haven for Women); Type: TABLE; Schema: safety; Owner: postgres
 --
 
 CREATE TABLE IF NOT EXISTS safety.safe_stores (

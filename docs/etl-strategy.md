@@ -59,6 +59,7 @@ Even filtering by 구 (district), a single 구 can have thousands of CCTVs acros
 | Smart street lights | 12,714 | 구 code only | Direct API by 구 workable for MVP |
 | Safe stores | 2,838 | 구 code only | Load all once, filter in browser |
 | Women's delivery boxes | 816 | 구 code only | Load all once, filter in browser |
+| Police facilities | 3,064 | None | **ETL required** — no coordinates in API; geocode during ETL |
 
 For small datasets (under ~5,000 records), loading everything once and filtering in the browser is acceptable. For large datasets, ETL into PostGIS is the only practical approach.
 
@@ -154,6 +155,22 @@ WMS tile APIs  →  Proxy + CloudFront     (cached image tiles)
 5. Log row counts to CloudWatch
 ```
 
+### Why CCTV and Emergency Bells Reload Everything
+
+CCTV (375,000 records) and emergency bells (88,843 records) re-fetch and re-upsert the full dataset every run. This seems wasteful but is the correct approach for these two datasets.
+
+**No reliable change signal.** The APIs provide `DAT_UPDT_PNT` (last updated timestamp) which could theoretically be used to filter only recently changed records. But even if you fetch only updated records, you still cannot detect deletions — a removed CCTV simply disappears from the API response with no signal. The only way to know something was deleted is to compare the full API response against the full DB contents.
+
+**No geocoding cost.** Coordinates come directly from the API as `WGS84_LAT`/`WGS84_LOT`. Re-upserting 375,000 records is just DB writes — cheap. A delta comparison would add complexity for no meaningful benefit.
+
+**Police facilities are different** because geocoding costs money (Kakao API call per record). Re-geocoding all 3,064 addresses every annual run wastes quota. So the delta comparison — load existing records into a Map, skip unchanged ones — is worth the added complexity to avoid unnecessary Kakao calls.
+
+| Dataset | Records | Geocoding needed | Strategy |
+|---|---|---|---|
+| CCTV | 375,000 | No — coordinates in API | Full reload every run |
+| Emergency bells | 88,843 | No — coordinates in API | Full reload every run |
+| Police facilities | 3,064 | Yes — Kakao API per record | Delta sync — only geocode new/changed |
+
 ### Upsert Pattern (no data loss)
 
 ```sql
@@ -199,6 +216,86 @@ ogr2ogr -f GeoJSON output.geojson input.shp
     ↓
 Load GeoJSON into PostgreSQL as LineString geometry
 ```
+
+---
+
+## 치안시설 — Source Selection & Geocoding Strategy
+
+### Candidate sources considered
+
+| Source | Coverage | Address quality | Coordinates | Update method |
+|---|---|---|---|---|
+| SafeMap API `IF_0036` | All 5 types — 경찰서, 지구대, 파출소, 치안센터, 안심부스 (3,064) | Typos, malformed | Often `"0"` (unreliable) | API → automatable |
+| **data.go.kr — 경찰서** | Police stations (259) | Clean | None | API → automatable |
+| **data.go.kr — 지구대/파출소** | Substations (2,047) | Clean | None | API → automatable |
+| **data.go.kr — 치안센터** | Security centers (669) | Clean | None | API → automatable |
+| geomarket.kr SHP | 지구대/파출소 only | N/A | Yes (geometry) | Manual download |
+
+**Decision: data.go.kr (3 APIs).**
+
+SafeMap was initially considered because it covers all 5 facility types in one API call. However, SafeMap address data contains typos (e.g., `경남상남도`, `보길동로 보길로 1-1`) and malformed strings that cause geocoding failures. Since coordinates come from geocoding the address, address quality is critical — wrong address = wrong map pin, which is unacceptable for a safety app.
+
+data.go.kr addresses are clean and standardized (경찰청 official records). Testing confirmed: 2,973 records geocoded with only 2 failures, both due to typos in the source data itself (unfixable). 안심부스 is excluded — data.go.kr doesn't cover it, but the count is negligible.
+
+### Geocoding strategy per facility type
+
+No source provides coordinates. All coordinates are resolved via Kakao Local Search API during ETL.
+
+Each facility type uses a different strategy based on how reliably its name and address can be found:
+
+| Facility | 1차 | 2차 fallback |
+|---|---|---|
+| 경찰서 | `search/keyword.json` with 경찰서명칭 | `search/address.json` with 경찰서주소 |
+| 지구대/파출소 | `search/address.json` with 주소 | `search/keyword.json` with 관서명+구분 + 시/구 |
+| 치안센터 | `search/address.json` with 주소 | `search/keyword.json` with 치안센터명 |
+
+**경찰서** — 경찰서명칭 (`충주경찰서`, `서울중부경찰서`) is a unique proper noun nationwide. Keyword search is more reliable than address search because the `경찰서주소` field omits the province and requires inference from the `시도경찰청` field.
+
+**지구대/파출소** — Address search first because `관서명` alone (`을지`, `중앙`) is ambiguous nationwide. The keyword fallback appends 시/구 prefix (`당현지구대 서울특별시 노원구`) to disambiguate.
+
+**치안센터** — Address search first. 치안센터명 (`충4치안센터`) is specific enough for keyword fallback without location context.
+
+### Juso API (행정안전부 addrCoordApi) — not used
+
+Juso coordinate API provides better coverage for official government addresses, but blocks requests from overseas IPs (행정안전부 공간정보 보안관리 규정). ETL runs on AWS Lambda outside Korea — Juso is not viable.
+
+### Geocoding results (2025 run)
+
+| Facility | Total | 1차 success | 2차 success | Failed |
+|---|---|---|---|---|
+| 경찰서 | 259 | ~247 | ~10 | 2 |
+| 지구대/파출소 | 2,047 | 1,995 | 50 | 2 |
+| 치안센터 | 669 | 618 | 51 | 0 |
+| **Total** | **2,975** | | | **2 (0.07%)** |
+
+The 2 failures are source data typos (`경남상남도`, `경산남도`) — unfixable at the ETL level.
+
+### Delta-sync — only geocode what changed
+
+On annual re-runs, most records are unchanged. Geocoding costs Kakao API quota, so we skip unchanged records:
+
+```
+1. Load existing records from DB keyed by source_id
+2. For each API record:
+     NEW:       source_id not in DB → geocode → insert
+     CHANGED:   road_address differs → re-geocode → update
+     UNCHANGED: skip (no geocoding, no write)
+3. Log run counts
+```
+
+### source_id format
+
+source_id is constructed from stable identifying fields (not sequential 연번):
+
+| Facility | source_id format | Example |
+|---|---|---|
+| 경찰서 | `station_{경찰서명칭}` | `station_충주경찰서` |
+| 지구대/파출소 | `substation_{시도청}_{관서명}_{구분}` | `substation_서울청_당현_지구대` |
+| 치안센터 | `security_center_{경찰서}_{치안센터명}` | `security_center_서울중부_충4치안센터` |
+
+### Update cadence
+
+Source data updates annually. Run this ETL **once a year**. Trigger manually after major administrative redistricting.
 
 ---
 
