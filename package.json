@@ -8,9 +8,9 @@
     "start": "node dist/server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon --exec ts-node src/server.ts",
-    "migrate:up": "node-pg-migrate up --migrations-dir migrations --tsconfig tsconfig.json --ts-node",
-    "migrate:down": "node-pg-migrate down --migrations-dir migrations --tsconfig tsconfig.json --ts-node",
-    "migrate:create": "node-pg-migrate create --migrations-dir migrations --tsconfig tsconfig.json --ts-node"
+    "migrate:up": "node-pg-migrate up --migrations-dir migrations",
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations",
+    "migrate:create": "node-pg-migrate create --migrations-dir migrations"
   },
   "repository": {
     "type": "git",

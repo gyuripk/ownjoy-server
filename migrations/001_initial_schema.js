@@ -1,6 +1,4 @@
-import { MigrationBuilder } from "node-pg-migrate";
-
-exports.up = (pgm: MigrationBuilder) => {
+exports.up = (pgm) => {
   pgm.sql(`
     CREATE SCHEMA IF NOT EXISTS safety;
 
@@ -116,7 +114,7 @@ exports.up = (pgm: MigrationBuilder) => {
   `);
 };
 
-exports.down = (pgm: MigrationBuilder) => {
+exports.down = (pgm) => {
   pgm.sql(`
     DROP TABLE IF EXISTS safety.safe_return_routes;
     DROP TABLE IF EXISTS safety.smart_street_lights;

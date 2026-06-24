@@ -1,6 +1,4 @@
-import { MigrationBuilder } from "node-pg-migrate";
-
-exports.up = (pgm: MigrationBuilder) => {
+exports.up = (pgm) => {
   pgm.sql(`
     CREATE TABLE IF NOT EXISTS safety.police_facilities (
       source_id      TEXT PRIMARY KEY,
@@ -16,6 +14,6 @@ exports.up = (pgm: MigrationBuilder) => {
   `);
 };
 
-exports.down = (pgm: MigrationBuilder) => {
+exports.down = (pgm) => {
   pgm.sql(`DROP TABLE IF EXISTS safety.police_facilities;`);
 };
