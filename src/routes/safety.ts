@@ -308,4 +308,51 @@ router.get("/smart-street-lights", async (req: Request, res: Response) => {
   });
 });
 
+// GET api/safety/police-facilities
+router.get("/police-facilities", async (req: Request, res: Response) => {
+  // get bbox param from req
+  const { bbox } = req.query;
+
+  if (!bbox) return res.status(400).json({ error: "bbox required" });
+
+  // store as seperate variables
+  const [west, south, east, north] = (bbox as string).split(",").map(Number);
+
+  // send query using bbox value and get data from db
+  const result = await pool.query(
+    `SELECT
+      source_id,
+      name,
+      facility_type,
+      road_address,
+      police_agency,
+      police_station,
+      ST_AsGeoJSON(location)::json AS geometry
+    FROM safety.police_facilities
+    WHERE ST_Intersects(
+      location,
+      ST_MakeEnvelope($1,$2,$3,$4,4326)
+    )`,
+    [west, south, east, north],
+  );
+
+  // build HTTP response with result as GeoJSON format
+  res.json({
+    // josn - body
+    type: "FeatureCollection",
+    features: result.rows.map((r) => ({
+      type: "Feature",
+      geometry: r.geometry,
+      properties: {
+        source_id: r.source_id,
+        name: r.name,
+        facility_type: r.facility_type,
+        road_address: r.road_address,
+        police_agency: r.police_agency,
+        police_station: r.police_station,
+      },
+    })),
+  });
+});
+
 export default router;
