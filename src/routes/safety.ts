@@ -325,6 +325,7 @@ router.get("/police-facilities", async (req: Request, res: Response) => {
       name,
       facility_type,
       road_address,
+      phone,
       police_agency,
       police_station,
       ST_AsGeoJSON(location)::json AS geometry
@@ -348,6 +349,7 @@ router.get("/police-facilities", async (req: Request, res: Response) => {
         name: r.name,
         facility_type: r.facility_type,
         road_address: r.road_address,
+        phone: r.phone,
         police_agency: r.police_agency,
         police_station: r.police_station,
       },
